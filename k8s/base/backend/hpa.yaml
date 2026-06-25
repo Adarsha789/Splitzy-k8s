@@ -1,0 +1,48 @@
+# HPA — Horizontal Pod Autoscaler for the backend.
+#
+# How it works:
+#   Kubernetes measures actual CPU/memory every 15s.
+#   If avg CPU > 70% across all backend pods -> add a replica (up to 6).
+#   If avg CPU < 70% for 5 minutes (stabilizationWindow) -> remove a replica.
+#   The stabilizationWindow prevents yo-yo scaling on transient spikes.
+#
+# Scale-up is fast (15s evaluation, 1 pod per step) so bursts are absorbed
+# quickly. Scale-down is slow (5 min window) so we don't kill pods that are
+# still draining requests.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: splitzy-backend
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: splitzy-backend
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60   # react to load within 1 minute
+      policies:
+        - type: Pods
+          value: 2                     # add at most 2 pods per scaling event
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300  # wait 5 min before removing pods
+      policies:
+        - type: Pods
+          value: 1                     # remove at most 1 pod per scaling event
+          periodSeconds: 120

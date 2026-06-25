@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: splitzy-frontend
+  labels:
+    app.kubernetes.io/name: splitzy-frontend
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: splitzy-frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

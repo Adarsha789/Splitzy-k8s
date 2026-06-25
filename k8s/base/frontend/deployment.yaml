@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: splitzy-frontend
+  labels:
+    app.kubernetes.io/name: splitzy-frontend
+    app.kubernetes.io/component: frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: splitzy-frontend
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: splitzy-frontend
+        app.kubernetes.io/component: frontend
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: splitzy-frontend
+      containers:
+        - name: frontend
+          image: splitzy-frontend:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 80
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          # The stock nginx image starts as root and chowns its cache dirs on
+          # boot, so we can't drop ALL capabilities here (it needs CHOWN/SETUID/
+          # SETGID). Hardening path: switch to nginxinc/nginx-unprivileged
+          # (listens on 8080, no chown) and then drop ALL — see README follow-ups.
+          securityContext:
+            allowPrivilegeEscalation: false

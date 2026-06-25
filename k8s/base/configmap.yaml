@@ -1,0 +1,25 @@
+# Non-sensitive runtime configuration shared by the backend Deployment and the
+# migration Job. Sensitive values (DJANGO_SECRET_KEY, DB password, email creds)
+# live in the Secret named "splitzy-secrets", provided per-overlay.
+#
+# Values below are safe defaults; each overlay patches the environment-specific
+# ones (PG_HOST, ALLOWED_HOST, CLIENT_DOMAIN, CORS_ALLOWED_HOST, COOKIE_SECURE).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: splitzy-config
+data:
+  DJANGO_SETTINGS_MODULE: "core.settings"
+  DEBUG: "False"
+  PG_HOST: "splitzy-postgres"
+  PG_PORT: "5432"
+  POSTGRES_DB: "splitzy"
+  EMAIL_HOST: "smtp.gmail.com"
+  EMAIL_PORT: "587"
+  EMAIL_USE_TLS: "True"
+  # Overridden per overlay:
+  ALLOWED_HOST: "localhost"
+  CLIENT_DOMAIN: "http://localhost"
+  CORS_ALLOWED_HOST: "http://localhost"
+  COOKIE_SECURE: "True"
+  GUNICORN_WORKERS: "3"

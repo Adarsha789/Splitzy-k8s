@@ -1,0 +1,21 @@
+# Production values. REPLACE the placeholders below with your real domain,
+# Azure PostgreSQL FQDN and Storage account before deploying.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: splitzy-config
+data:
+  DEBUG: "False"
+  # Azure Database for PostgreSQL Flexible Server FQDN:
+  PG_HOST: "splitzy-pg.postgres.database.azure.com"
+  PG_PORT: "5432"
+  POSTGRES_DB: "splitzy"
+  # Public domain served by the ingress:
+  ALLOWED_HOST: "splitzy.example.com"
+  CLIENT_DOMAIN: "https://splitzy.example.com"
+  CORS_ALLOWED_HOST: "https://splitzy.example.com"
+  COOKIE_SECURE: "True"
+  GUNICORN_WORKERS: "4"
+  # Azure Blob media storage (account key comes from Key Vault, not here):
+  AZURE_ACCOUNT_NAME: "splitzymedia"
+  AZURE_MEDIA_CONTAINER: "media"

@@ -1,0 +1,52 @@
+# Single edge for the app. The NGINX Ingress Controller terminates the
+# connection and routes by path:
+#   /api, /static, /media -> Django backend (Service :8000)
+#   everything else       -> React frontend (Service :80)
+# Host and TLS are set per overlay.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: splitzy
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "25m"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: splitzy.local
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: splitzy-backend
+                port:
+                  number: 8000
+          - path: /static
+            pathType: Prefix
+            backend:
+              service:
+                name: splitzy-backend
+                port:
+                  number: 8000
+          - path: /media
+            pathType: Prefix
+            backend:
+              service:
+                name: splitzy-backend
+                port:
+                  number: 8000
+          - path: /admin
+            pathType: Prefix
+            backend:
+              service:
+                name: splitzy-backend
+                port:
+                  number: 8000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: splitzy-frontend
+                port:
+                  number: 80

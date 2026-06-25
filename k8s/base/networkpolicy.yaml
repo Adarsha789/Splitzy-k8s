@@ -1,0 +1,138 @@
+# NetworkPolicy — default-deny then allow only what is needed.
+# Think of it as a firewall that lives inside the cluster.
+#
+# Traffic map:
+#   Internet ──► ingress-nginx ──► frontend (port 80)
+#                             └──► backend  (port 8000)
+#   backend/migrate/superuser ──► postgres (port 5432)  [in-cluster, minikube]
+#   backend/migrate/superuser ──► Internet (SMTP, Azure services, Key Vault)
+#   All other pod-to-pod traffic: DENIED
+
+---
+# 1. Default deny: block ALL ingress/egress inside the namespace by default.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+# 2. Allow the NGINX ingress controller to reach the frontend pods.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-to-frontend
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: splitzy-frontend
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 80
+
+---
+# 3. Allow the NGINX ingress controller to reach the backend pods.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-to-backend
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: splitzy-backend
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 8000
+
+---
+# 4. Allow the backend to reach Postgres (in-cluster, minikube overlay only).
+#    In aks-prod, Postgres is Azure managed — traffic leaves the cluster as
+#    regular HTTPS/TCP, handled by the egress rule below.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-backend-to-postgres
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: splitzy-postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: splitzy-backend
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: splitzy-migrate
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: splitzy-superuser
+      ports:
+        - protocol: TCP
+          port: 5432
+
+---
+# 5. Allow backend and migrate-job to make outbound connections.
+#    They need: DNS (53), Azure Postgres (5432), SMTP (587), Azure APIs (443).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-backend-egress
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values:
+          - splitzy-backend
+          - splitzy-migrate
+          - splitzy-superuser
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - protocol: UDP
+          port: 53   # DNS — must always be allowed
+        - protocol: TCP
+          port: 5432  # PostgreSQL (Azure Flexible Server or in-cluster)
+        - protocol: TCP
+          port: 587   # Gmail SMTP TLS
+        - protocol: TCP
+          port: 443   # Azure Blob, Key Vault, any HTTPS outbound
+
+---
+# 6. Allow frontend pods to make outbound DNS only (nginx doesn't call anything).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-frontend-egress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: splitzy-frontend
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - protocol: UDP
+          port: 53

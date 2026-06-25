@@ -10,28 +10,37 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
+import os
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
+def env_list(name, default=""):
+    """Read a comma-separated env var into a clean list of non-empty values."""
+    return [item.strip() for item in os.getenv(name, default).split(",") if item.strip()]
+
+
+def env_bool(name, default="False"):
+    return os.getenv(name, default).strip().lower() in ("1", "true", "yes", "on")
+
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = "django-insecure-c(6!hm5f7x-a8+hg-qf5p=m&*j+aydt^a#r+i76ac#b+e*6f(z"
-import os
+# Sourced from the DJANGO_SECRET_KEY secret in production (never hardcode in prod).
+SECRET_KEY = os.getenv(
+    "DJANGO_SECRET_KEY",
+    "django-insecure-c(6!hm5f7x-a8+hg-qf5p=m&*j+aydt^a#r+i76ac#b+e*6f(z",
+)
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = False
+DEBUG = env_bool("DEBUG", "False")
 
-ALLOWED_HOSTS = [
-    "localhost",
-    "127.0.0.1",
-    "165.22.108.64",
-    os.getenv("ALLOWED_HOST"),
-]
+# Always-on local hosts plus anything provided via ALLOWED_HOST(S) env (comma-separated).
+ALLOWED_HOSTS = ["localhost", "127.0.0.1"] + env_list("ALLOWED_HOST") + env_list("ALLOWED_HOSTS")
 
 CLIENT_DOMAIN = os.getenv("CLIENT_DOMAIN")
 
@@ -57,6 +66,9 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    # WhiteNoise serves collected static files directly from the app pods,
+    # so no shared static volume is needed between Django and Nginx in K8s.
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -141,6 +153,33 @@ MEDIA_URL = "media/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 MEDIA_ROOT = BASE_DIR / "mediafiles"
 
+# Django 4.2+ STORAGES API.
+# - static: WhiteNoise (compressed + hashed) so each pod serves its own static.
+# - media: Azure Blob when AZURE_ACCOUNT_NAME is set, else local filesystem (dev).
+STORAGES = {
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+    },
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    },
+}
+
+if os.getenv("AZURE_ACCOUNT_NAME"):
+    STORAGES["default"] = {
+        "BACKEND": "storages.backends.azure_storage.AzureStorage",
+        "OPTIONS": {
+            "account_name": os.getenv("AZURE_ACCOUNT_NAME"),
+            "account_key": os.getenv("AZURE_ACCOUNT_KEY"),
+            "azure_container": os.getenv("AZURE_MEDIA_CONTAINER", "media"),
+            "expiration_secs": None,  # public container; serve URLs directly
+        },
+    }
+    MEDIA_URL = (
+        f"https://{os.getenv('AZURE_ACCOUNT_NAME')}.blob.core.windows.net/"
+        f"{os.getenv('AZURE_MEDIA_CONTAINER', 'media')}/"
+    )
+
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
@@ -164,38 +203,35 @@ from datetime import timedelta
 # SIMPLE JWT CONF
 SIMPLE_JWT = {
     "AUTH_HEADER_TYPES": ["Bearer"],
-    "ACCESS_TOKEN_LIFETIME": timedelta(seconds=30),
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
     "REFRESH_TOKEN_LIFETIME": timedelta(hours=7),
-    # "SIGNING_KEY": SECRET_KEY,
 }
 
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",
-    "http://165.22.108.64",
-    "http://165.22.108.64:80",
-    os.getenv("CORS_ALLOWED_HOST"),
-]
+# Origins come from env (comma-separated), e.g. "https://splitzy.example.com".
+# Local dev defaults are always included.
+_default_origins = ["http://localhost:5173", "http://localhost"]
+CORS_ALLOWED_ORIGINS = _default_origins + env_list("CORS_ALLOWED_HOST") + env_list("CORS_ALLOWED_ORIGINS")
 CORS_ALLOW_CREDENTIALS = True
-CSRF_TRUSTED_ORIGINS = [
-    "http://localhost:5173",
-    "http://165.22.108.64",
-    "http://165.22.108.64:80",
-    os.getenv("CORS_ALLOWED_HOST"),
-]
+CSRF_TRUSTED_ORIGINS = _default_origins + env_list("CORS_ALLOWED_HOST") + env_list("CSRF_TRUSTED_ORIGINS")
 
-# Required for sending cookies from backend -> frontend on different domains
-SESSION_COOKIE_SAMESITE = "None"
-CSRF_COOKIE_SAMESITE = "None"
+# Cookies are shared cross-site, so SameSite=None requires Secure=True (HTTPS).
+# Toggle COOKIE_SECURE=False only for local HTTP testing (e.g. minikube without TLS).
+COOKIE_SECURE = env_bool("COOKIE_SECURE", "True")
+SESSION_COOKIE_SAMESITE = "None" if COOKIE_SECURE else "Lax"
+CSRF_COOKIE_SAMESITE = "None" if COOKIE_SECURE else "Lax"
+SESSION_COOKIE_SECURE = COOKIE_SECURE
+CSRF_COOKIE_SECURE = COOKIE_SECURE
 
-SESSION_COOKIE_SECURE = True  # For development (True in production with HTTPS)
-CSRF_COOKIE_SECURE = True  # For development (True in production with HTTPS)
+# Honour the X-Forwarded-Proto header set by the ingress/load balancer so Django
+# knows the original request was HTTPS even though the pod receives plain HTTP.
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 
 # SETTING FOR AUTOMATIC EMAIL FOR EMAIL Notification to user
 EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-EMAIL_HOST = "smtp.gmail.com"
-EMAIL_USE_TLS = True
-EMAIL_PORT = 587
+EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
+EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
+EMAIL_USE_TLS = env_bool("EMAIL_USE_TLS", "True")
 EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER")
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD")
 

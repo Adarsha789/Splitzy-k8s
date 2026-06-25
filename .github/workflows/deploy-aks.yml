@@ -1,0 +1,171 @@
+# CI/CD pipeline: build images → push to ACR → deploy to AKS.
+#
+# Triggered on every push to main. Uses OIDC (federated credentials) so there
+# are NO long-lived Azure passwords stored as GitHub secrets.
+#
+# Required GitHub repo secrets/variables (Settings → Secrets and variables):
+#   AZURE_CLIENT_ID        — App registration / managed identity client ID
+#   AZURE_TENANT_ID        — Your Azure tenant ID
+#   AZURE_SUBSCRIPTION_ID  — Your Azure subscription ID
+#   ACR_NAME               — ACR name WITHOUT .azurecr.io (e.g. "splitzyacr")
+#   AKS_RESOURCE_GROUP     — Resource group that contains the AKS cluster
+#   AKS_CLUSTER_NAME       — AKS cluster name (e.g. "splitzy-aks")
+
+name: Build and Deploy to AKS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:          # allow manual trigger from the GitHub UI
+
+permissions:
+  id-token: write             # REQUIRED for OIDC — lets the runner get an Azure token
+  contents: read
+
+env:
+  ACR_LOGIN_SERVER: ${{ vars.ACR_NAME }}.azurecr.io
+
+jobs:
+  # ─────────────────────────────────────────────────────────────
+  # Job 1: Build and push both Docker images to ACR
+  # ─────────────────────────────────────────────────────────────
+  build:
+    name: Build & Push Images
+    runs-on: ubuntu-latest
+
+    outputs:
+      image_tag: ${{ steps.tag.outputs.tag }}   # pass the SHA tag to the deploy job
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # OIDC login — exchanges a short-lived GitHub OIDC token for an Azure access
+      # token. No password stored anywhere.
+      - name: Login to Azure (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Login to ACR
+        run: az acr login --name ${{ vars.ACR_NAME }}
+
+      # Use the first 7 chars of the commit SHA as the image tag.
+      # This makes every deploy traceable back to an exact commit.
+      - name: Set image tag
+        id: tag
+        run: echo "tag=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+
+      # Build backend (Django/Gunicorn). Static files are collected at build time
+      # (see docker/django/Dockerfile), so no collectstatic at runtime.
+      - name: Build & push backend
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/django/Dockerfile
+          push: true
+          tags: |
+            ${{ env.ACR_LOGIN_SERVER }}/splitzy-backend:${{ steps.tag.outputs.tag }}
+            ${{ env.ACR_LOGIN_SERVER }}/splitzy-backend:latest
+          cache-from: type=registry,ref=${{ env.ACR_LOGIN_SERVER }}/splitzy-backend:latest
+          cache-to: type=inline
+
+      # Build frontend (React/Vite → nginx).
+      # VITE_API_URL=/api bakes a same-origin API base URL into the JS bundle so
+      # the browser always calls /api/... on the same domain — no CORS needed.
+      - name: Build & push frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/nginx/Dockerfile
+          push: true
+          build-args: VITE_API_URL=/api
+          tags: |
+            ${{ env.ACR_LOGIN_SERVER }}/splitzy-frontend:${{ steps.tag.outputs.tag }}
+            ${{ env.ACR_LOGIN_SERVER }}/splitzy-frontend:latest
+          cache-from: type=registry,ref=${{ env.ACR_LOGIN_SERVER }}/splitzy-frontend:latest
+          cache-to: type=inline
+
+  # ─────────────────────────────────────────────────────────────
+  # Job 2: Deploy to AKS
+  # ─────────────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to AKS
+    runs-on: ubuntu-latest
+    needs: build                  # only runs if build succeeded
+    environment: production       # optional: requires a GitHub environment approval gate
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Login to Azure (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # Download AKS credentials into the runner's kubeconfig so kubectl works.
+      - name: Set AKS kubeconfig
+        uses: azure/aks-set-context@v3
+        with:
+          resource-group: ${{ secrets.AKS_RESOURCE_GROUP }}
+          cluster-name: ${{ secrets.AKS_CLUSTER_NAME }}
+
+      - name: Install kustomize
+        uses: imranismail/setup-kustomize@v2
+
+      # Update the image tags in the aks-prod overlay to the new SHA tag.
+      # This is the key step — Kustomize patches the Deployment image field,
+      # so kubectl apply rolls the new image without touching any other config.
+      - name: Update image tags in kustomize overlay
+        working-directory: k8s/overlays/aks-prod
+        run: |
+          kustomize edit set image \
+            splitzy-backend=${{ env.ACR_LOGIN_SERVER }}/splitzy-backend:${{ needs.build.outputs.image_tag }} \
+            splitzy-frontend=${{ env.ACR_LOGIN_SERVER }}/splitzy-frontend:${{ needs.build.outputs.image_tag }}
+
+      # Delete the previous migrate Job so we can re-create it (Jobs are immutable).
+      - name: Delete stale migrate Job
+        run: kubectl -n splitzy delete job splitzy-migrate --ignore-not-found
+
+      # Apply ALL manifests (namespace, configmap, secret via CSI, deployments, etc.)
+      - name: Apply kustomize overlay
+        run: kubectl apply -k k8s/overlays/aks-prod
+
+      # Migrations must finish before new app pods become live.
+      - name: Wait for migrate Job to complete
+        run: |
+          kubectl -n splitzy wait \
+            --for=condition=complete \
+            job/splitzy-migrate \
+            --timeout=180s
+
+      # Rolling update: new pods come up, probes pass, old pods terminate.
+      - name: Wait for backend rollout
+        run: kubectl -n splitzy rollout status deployment/splitzy-backend --timeout=300s
+
+      - name: Wait for frontend rollout
+        run: kubectl -n splitzy rollout status deployment/splitzy-frontend --timeout=120s
+
+      - name: Show final pod status
+        run: kubectl -n splitzy get pods,ingress,hpa
+
+  # ─────────────────────────────────────────────────────────────
+  # Always send an email notification (reuses your existing script)
+  # ─────────────────────────────────────────────────────────────
+  notify:
+    name: Email Notification
+    runs-on: ubuntu-latest
+    needs: [build, deploy]
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+      - name: Send result email
+        env:
+          EMAIL_PASS: ${{ secrets.EMAIL_PASSWORD }}
+          STATUS: ${{ needs.deploy.result }}
+        run: python3 .github/scripts/email-script.py

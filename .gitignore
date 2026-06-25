@@ -175,3 +175,5 @@ cython_debug/
 
 /exports
 .vite/
+# Kubernetes local secrets (never commit)
+k8s/overlays/minikube/secret.env

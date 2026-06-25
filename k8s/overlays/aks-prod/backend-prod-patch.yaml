@@ -1,0 +1,34 @@
+# AKS-prod backend Deployment patches:
+#   - imagePullPolicy Always  (ACR images are always pushed with new tags;
+#                              IfNotPresent would silently reuse a stale cached layer)
+#   - 3 replicas to start     (HPA adjusts from there)
+#   - workload-identity label (tells the Azure token webhook to inject the
+#                              federated credential into this pod)
+#   - CSI volume + mount      (materialises Key Vault secrets as the K8s Secret
+#                              "splitzy-secrets" before envFrom reads it)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: splitzy-backend
+spec:
+  replicas: 3
+  template:
+    metadata:
+      labels:
+        azure.workload.identity/use: "true"
+    spec:
+      serviceAccountName: splitzy-backend
+      containers:
+        - name: backend
+          imagePullPolicy: Always
+          volumeMounts:
+            - name: secrets-store
+              mountPath: /mnt/secrets-store
+              readOnly: true
+      volumes:
+        - name: secrets-store
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: splitzy-kv

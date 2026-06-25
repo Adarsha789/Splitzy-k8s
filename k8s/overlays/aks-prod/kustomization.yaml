@@ -1,0 +1,31 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: splitzy
+
+resources:
+  - ../../base
+  - secretproviderclass.yaml
+  # ClusterIssuer is cluster-scoped (no namespace); apply it separately once:
+  #   kubectl apply -f k8s/overlays/aks-prod/clusterissuer.yaml
+
+patches:
+  - path: configmap-patch.yaml
+  - path: ingress-patch.yaml
+  - path: serviceaccount-patch.yaml  # add workload-identity annotation to SA
+  - path: backend-prod-patch.yaml    # imagePullPolicy=Always, 3 replicas, CSI volume
+  - path: migrate-csi-patch.yaml     # same CSI volume for the migrate Job
+
+# Images are pushed to ACR by CI with the git SHA as tag.
+# CI updates these two lines automatically via:
+#   cd k8s/overlays/aks-prod
+#   kustomize edit set image \
+#     splitzy-backend=<ACR>.azurecr.io/splitzy-backend:<SHA> \
+#     splitzy-frontend=<ACR>.azurecr.io/splitzy-frontend:<SHA>
+images:
+  - name: splitzy-backend
+    newName: youracr.azurecr.io/splitzy-backend   # REPLACE youracr
+    newTag: latest
+  - name: splitzy-frontend
+    newName: youracr.azurecr.io/splitzy-frontend   # REPLACE youracr
+    newTag: latest

@@ -1,0 +1,34 @@
+# HPA for the frontend (nginx serving static React build).
+# CPU usage is almost zero at idle; scale purely on CPU to keep it simple.
+# Frontend is stateless so scale-down is safe and can be aggressive.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: splitzy-frontend
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: splitzy-frontend
+  minReplicas: 2
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 180  # frontend is stateless, scale down faster
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60

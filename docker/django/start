@@ -4,17 +4,16 @@ set -o errexit
 set -o pipefail
 set -o nounset
 
+# NOTE: database migrations are intentionally NOT run here.
+# With multiple replicas, running migrate on every pod boot causes races.
+# Migrations run once per release via the dedicated Kubernetes Job
+# (k8s/base/migrate-job.yaml). Static files are collected at image build time
+# (see docker/django/Dockerfile), so we only start the app server here.
 
-# Apply database migrations
-python3 manage.py makemigrations --no-input
-python3 manage.py migrate --no-input
-
-# Collect static files
-python3 manage.py collectstatic --no-input
-
-# Run the application using Gunicorn
 exec gunicorn core.wsgi:application \
     --bind 0.0.0.0:8000 \
-    --workers 3 \
+    --workers "${GUNICORN_WORKERS:-3}" \
     --timeout 120 \
+    --access-logfile - \
+    --error-logfile - \
     --log-level info

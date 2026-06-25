@@ -18,7 +18,11 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path, include
 
+from core.health import healthz, readyz
+
 urlpatterns = [
+    path("healthz/", healthz),
+    path("readyz/", readyz),
     path("admin/", admin.site.urls),
     path("api/swagger/", include("core.swagger")),
     path("api/", include("users.urls")),

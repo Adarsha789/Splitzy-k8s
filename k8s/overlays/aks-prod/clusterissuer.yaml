@@ -1,0 +1,29 @@
+# cert-manager ClusterIssuer — tells cert-manager how to get certificates
+# from Let's Encrypt (the free, trusted CA used by millions of sites).
+#
+# How it works:
+#   1. You apply this once after installing cert-manager.
+#   2. When the Ingress says `cert-manager.io/cluster-issuer: letsencrypt-prod`,
+#      cert-manager sees it and asks Let's Encrypt for a certificate.
+#   3. Let's Encrypt verifies ownership via HTTP-01 challenge — it hits
+#      http://<your-domain>/.well-known/acme-challenge/<token> through your
+#      Ingress. That's why the domain DNS must point to the cluster first.
+#   4. cert-manager stores the issued cert in a Secret named "splitzy-tls".
+#   5. cert-manager auto-renews the cert 30 days before it expires.
+#
+# REPLACE: put your real email address below (Let's Encrypt sends expiry notices).
+# Apply: kubectl apply -f k8s/overlays/aks-prod/clusterissuer.yaml
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: you@example.com          # REPLACE: your admin email
+    privateKeySecretRef:
+      name: letsencrypt-prod-key    # cert-manager stores its ACME key here
+    solvers:
+      - http01:
+          ingress:
+            class: nginx

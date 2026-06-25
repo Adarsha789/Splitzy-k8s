@@ -1,0 +1,40 @@
+# Runs database migrations once per release, instead of on every pod boot.
+# Re-running: this Job's name is suffixed with a content hash by Kustomize's
+# image tag changes in CI; for manual re-runs, delete it first:
+#   kubectl -n splitzy delete job splitzy-migrate --ignore-not-found
+# then re-apply. (Completed Jobs are immutable.)
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: splitzy-migrate
+  labels:
+    app.kubernetes.io/name: splitzy-migrate
+    app.kubernetes.io/component: migration
+spec:
+  backoffLimit: 3
+  # Clean the Job up automatically 10 minutes after it finishes.
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: splitzy-migrate
+    spec:
+      restartPolicy: Never
+      serviceAccountName: splitzy-backend
+      containers:
+        - name: migrate
+          image: splitzy-backend:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "manage.py", "migrate", "--no-input"]
+          envFrom:
+            - configMapRef:
+                name: splitzy-config
+            - secretRef:
+                name: splitzy-secrets
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

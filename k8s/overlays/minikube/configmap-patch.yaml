@@ -1,0 +1,13 @@
+# Local minikube values. The app is served over plain HTTP at http://splitzy.local,
+# so COOKIE_SECURE must be False (Secure cookies require HTTPS).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: splitzy-config
+data:
+  DEBUG: "True"
+  PG_HOST: "splitzy-postgres"
+  ALLOWED_HOST: "splitzy.local"
+  CLIENT_DOMAIN: "http://splitzy.local"
+  CORS_ALLOWED_HOST: "http://splitzy.local"
+  COOKIE_SECURE: "False"

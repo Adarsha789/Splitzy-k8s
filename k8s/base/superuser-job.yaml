@@ -1,0 +1,71 @@
+# One-shot Job that creates the Django admin superuser.
+# Run this ONCE after the first deploy (or after a DB wipe):
+#
+#   kubectl -n splitzy delete job splitzy-superuser --ignore-not-found
+#   kubectl apply -f k8s/base/superuser-job.yaml -n splitzy
+#
+# Credentials come from the same "splitzy-secrets" Secret.
+# Add these keys to your secret.env (minikube) or Key Vault (aks-prod):
+#   DJANGO_SUPERUSER_EMAIL     = admin@example.com
+#   DJANGO_SUPERUSER_PASSWORD  = <strong-password>
+#   DJANGO_SUPERUSER_NAME      = Admin   (optional, defaults to "Admin")
+#
+# NOTE: This app uses a custom User with EMAIL as USERNAME_FIELD (no username
+# column), so the standard --no-input createsuperuser doesn't work here.
+# This Job uses a direct ORM call instead and is idempotent (safe to re-run).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: splitzy-superuser
+  labels:
+    app.kubernetes.io/name: splitzy-superuser
+    app.kubernetes.io/component: management
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: splitzy-superuser
+    spec:
+      restartPolicy: Never
+      serviceAccountName: splitzy-backend
+      containers:
+        - name: superuser
+          image: splitzy-backend:latest
+          imagePullPolicy: IfNotPresent
+          # The custom User model uses email as USERNAME_FIELD but still inherits
+          # AbstractUser's username column. Django's createsuperuser --no-input
+          # would fail with a missing-positional-arg TypeError in that setup,
+          # so we create the admin directly via the ORM instead.
+          # Idempotent: exits 0 silently if the email already exists.
+          command:
+            - python
+            - "-c"
+            - |
+              import django, os, sys
+              django.setup()
+              from django.contrib.auth import get_user_model
+              User = get_user_model()
+              email    = os.environ['DJANGO_SUPERUSER_EMAIL']
+              password = os.environ['DJANGO_SUPERUSER_PASSWORD']
+              if User.objects.filter(email=email).exists():
+                  print(f'Superuser {email} already exists, skipping.')
+                  sys.exit(0)
+              User.objects.create_superuser(
+                  username=email, email=email, password=password,
+                  name=os.environ.get('DJANGO_SUPERUSER_NAME', 'Admin'),
+              )
+              print(f'Superuser {email} created successfully.')
+          envFrom:
+            - configMapRef:
+                name: splitzy-config
+            - secretRef:
+                name: splitzy-secrets
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi

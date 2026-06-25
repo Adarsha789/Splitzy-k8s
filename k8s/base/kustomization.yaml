@@ -1,0 +1,34 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: splitzy
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: splitzy
+    includeSelectors: true
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - resourcequota.yaml
+  - networkpolicy.yaml
+  - backend/serviceaccount.yaml
+  - backend/deployment.yaml
+  - backend/service.yaml
+  - backend/hpa.yaml
+  - backend/pdb.yaml
+  - frontend/deployment.yaml
+  - frontend/service.yaml
+  - frontend/hpa.yaml
+  - frontend/pdb.yaml
+  - migrate-job.yaml
+  - superuser-job.yaml
+  - ingress.yaml
+
+# Overlays override these with the real registry/tag (ACR for prod, local for minikube).
+images:
+  - name: splitzy-backend
+    newTag: latest
+  - name: splitzy-frontend
+    newTag: latest

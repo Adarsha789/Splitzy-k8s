@@ -1,0 +1,79 @@
+# Production Ingress: TLS, security headers, rate-limiting, timeouts.
+# Every annotation here is an instruction to the NGINX ingress controller.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: splitzy
+  annotations:
+    # TLS — cert-manager will auto-issue and renew the Let's Encrypt certificate.
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+
+    # --- Security headers (injected by nginx into every response) ---
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      add_header X-Frame-Options "SAMEORIGIN" always;
+      add_header X-Content-Type-Options "nosniff" always;
+      add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+      add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
+      add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+    # --- Rate limiting (protects login/api from brute-force & abuse) ---
+    # 30 requests per minute per IP; burst of 10 allowed before throttling.
+    nginx.ingress.kubernetes.io/limit-rps: "30"
+    nginx.ingress.kubernetes.io/limit-burst-multiplier: "3"
+
+    # --- Request size & timeouts ---
+    nginx.ingress.kubernetes.io/proxy-body-size: "25m"       # max upload size
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"     # seconds
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "10"
+
+    # --- CORS handled by Django; tell nginx NOT to add its own CORS headers ---
+    nginx.ingress.kubernetes.io/enable-cors: "false"
+
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - splitzy.example.com       # REPLACE with your real domain
+      secretName: splitzy-tls       # cert-manager writes the cert here
+  rules:
+    - host: splitzy.example.com     # REPLACE with your real domain
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: splitzy-backend
+                port:
+                  number: 8000
+          - path: /static
+            pathType: Prefix
+            backend:
+              service:
+                name: splitzy-backend
+                port:
+                  number: 8000
+          - path: /media
+            pathType: Prefix
+            backend:
+              service:
+                name: splitzy-backend
+                port:
+                  number: 8000
+          - path: /admin
+            pathType: Prefix
+            backend:
+              service:
+                name: splitzy-backend
+                port:
+                  number: 8000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: splitzy-frontend
+                port:
+                  number: 80

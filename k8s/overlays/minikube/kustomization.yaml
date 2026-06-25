@@ -1,0 +1,30 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: splitzy
+
+resources:
+  - ../../base
+  - postgres.yaml
+
+patches:
+  - path: configmap-patch.yaml
+
+# Build these locally into minikube's Docker daemon (see k8s/README.md), so they
+# resolve without a registry. imagePullPolicy in the base is IfNotPresent.
+images:
+  - name: splitzy-backend
+    newName: splitzy-backend
+    newTag: dev
+  - name: splitzy-frontend
+    newName: splitzy-frontend
+    newTag: dev
+
+# Plain Secret from a local, gitignored env file. disableNameSuffixHash keeps the
+# name stable ("splitzy-secrets") so envFrom/secretRef references resolve.
+secretGenerator:
+  - name: splitzy-secrets
+    envs:
+      - secret.env
+    options:
+      disableNameSuffixHash: true

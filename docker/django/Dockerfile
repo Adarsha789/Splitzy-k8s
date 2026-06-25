@@ -34,6 +34,10 @@ RUN pip install -r requirements.txt
 # Copy project files into the container
 COPY ./backend $APP_HOME
 
+# Collect static files at build time (WhiteNoise serves them at runtime).
+# Uses the fallback SECRET_KEY and touches no database, so it is safe here.
+RUN python3 manage.py collectstatic --no-input
+
 # Copy and configure entrypoint scripts
 COPY ./docker/django/entrypoint /entrypoint
 RUN sed -i 's/\r$//g' /entrypoint && chmod +x /entrypoint

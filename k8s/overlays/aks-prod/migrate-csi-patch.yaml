@@ -1,0 +1,28 @@
+# The migrate Job also mounts the CSI volume. It runs before the backend pods
+# on a fresh deploy — mounting the volume is what triggers the Secrets Store
+# CSI driver to pull the secrets from Key Vault and create "splitzy-secrets".
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: splitzy-migrate
+spec:
+  template:
+    metadata:
+      labels:
+        azure.workload.identity/use: "true"
+    spec:
+      serviceAccountName: splitzy-backend
+      containers:
+        - name: migrate
+          imagePullPolicy: Always
+          volumeMounts:
+            - name: secrets-store
+              mountPath: /mnt/secrets-store
+              readOnly: true
+      volumes:
+        - name: secrets-store
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: splitzy-kv

@@ -1,3 +1,4 @@
+from django.conf import settings as django_settings
 from rest_framework.views import APIView
 from rest_framework import generics, mixins
 from django.contrib.auth import get_user_model, authenticate
@@ -39,8 +40,8 @@ class RegisterView(APIView):
                     key="refresh_token",
                     value=str(refresh),
                     httponly=True,
-                    secure=False,  # Change to True in production (with HTTPS)
-                    samesite="Lax",
+                    secure=django_settings.SESSION_COOKIE_SECURE,
+                    samesite=django_settings.SESSION_COOKIE_SAMESITE,
                     path="/",
                     max_age=7 * 24 * 60 * 60,  # 7 days
                 )
@@ -70,8 +71,8 @@ class LoginView(APIView):
                     key="refresh_token",
                     value=str(refresh),
                     httponly=True,
-                    secure=False,  # Change to True in production (with HTTPS)
-                    samesite="Lax",
+                    secure=django_settings.SESSION_COOKIE_SECURE,
+                    samesite=django_settings.SESSION_COOKIE_SAMESITE,
                     path="/",
                     max_age=7 * 24 * 60 * 60,  # 7 days
                 )

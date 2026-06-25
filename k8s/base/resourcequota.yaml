@@ -1,0 +1,16 @@
+# Namespace-level guard-rail so a runaway HPA or misconfigured Job can't
+# consume all node resources and starve other workloads on the cluster.
+# Values are sized for a 2-node Standard_B2s cluster (2 vCPU / 4 GiB each).
+# Raise limits once you know your real steady-state consumption.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: splitzy-quota
+spec:
+  hard:
+    requests.cpu: "2"
+    requests.memory: 3Gi
+    limits.cpu: "4"
+    limits.memory: 6Gi
+    pods: "20"
+    count/jobs.batch: "10"
